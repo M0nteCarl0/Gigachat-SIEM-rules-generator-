@@ -1,2 +1,2 @@
-# Gigachat-SIEM-rules-generator-
+# Gigachat SIEM rules generator
 Generator SIEM rules via LLM Gigachat
