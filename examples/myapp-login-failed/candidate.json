@@ -1,0 +1,32 @@
+{
+  "decoder": {
+    "name": "myapp-login",
+    "program_name": "^myapp$",
+    "parent": null,
+    "prematch": "login_failed ",
+    "regex": "^user=(\\S+) src=(\\S+) attempts=\\S+$",
+    "offset": "after_prematch",
+    "order": [
+      "srcuser",
+      "srcip"
+    ]
+  },
+  "rule": {
+    "level": 10,
+    "description": "MyApp: повторный неуспешный вход для пользователя $(srcuser) с $(srcip)",
+    "decoded_as": "myapp-login",
+    "match": "login_failed",
+    "groups": [
+      "app_auth"
+    ],
+    "mitre": [
+      "T1110"
+    ]
+  },
+  "logsource": {
+    "product": "custom_app",
+    "service": "auth"
+  },
+  "confidence": 0.9,
+  "rationale": "Префикс myapp[pid] задаёт источник, 'login_failed' — признак события, user= и src= разбираются в srcuser/srcip, attempts= поглощается без захвата."
+}

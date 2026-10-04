@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "siggen"
+version = "0.1.0"
+description = "Detection-as-Code генератор SIEM-правил для Wazuh/OSSEC: LLM предлагает, движок проверяет"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+dependencies = [
+    "pydantic>=2.5",
+    # Нужен для безопасного разбора XML (SEC-3). Код работает и без него:
+    # включается собственная защита от DOCTYPE/ENTITY с предупреждением.
+    "defusedxml>=0.7",
+]
+
+[project.optional-dependencies]
+gigachat = ["gigachat>=0.1.20"]
+ui = ["streamlit>=1.30"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+siggen = "siggen.cli:main"
+
+[tool.setuptools]
+packages = ["siggen", "siggen.ui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

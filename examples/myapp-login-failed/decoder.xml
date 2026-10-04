@@ -1,0 +1,8 @@
+<decoder name="myapp-login">
+  <program_name>^myapp$</program_name>
+  <prematch>login_failed </prematch>
+  <regex offset="after_prematch">^user=(\S+) src=(\S+) attempts=\S+$</regex>
+  <order>srcuser, srcip</order>
+</decoder>
+
+<!-- Сгенерировано siggen, требует ревью перед деплоем -->

@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Установка
+        run: python -m pip install -e ".[dev]"
+
+      - name: Тесты
+        run: python -m pytest
+
+      - name: Дымовой прогон без модели и без движка
+        run: |
+          python -m siggen gen \
+            --log samples/positive.log \
+            --negative samples/negative.log \
+            --out out --registry registry/ci.json
+
+      # Провал, если кандидат не прошёл статические проверки или политику проекта.
+      - name: Артефакт прошёл проверки
+        run: test -f out/report.md && grep -q "ГОТОВО К РЕВЬЮ" out/report.md
+
+      # Прогон через настоящий движок в hosted-runner недоступен: образа Wazuh здесь нет.
+      # В своей инфраструктуре добавьте шаг с лабораторией (docker-compose.yml) и флагом
+      # --require-engine — тогда правило без зелёного logtest не пройдёт CI.

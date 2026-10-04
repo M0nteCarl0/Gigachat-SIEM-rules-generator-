@@ -1,0 +1,9 @@
+<rule id="100100" level="10">
+  <decoded_as>myapp-login</decoded_as>
+  <match>login_failed</match>
+  <description>MyApp: повторный неуспешный вход для пользователя $(srcuser) с $(srcip)</description>
+  <group>app_auth</group>
+  <mitre>
+    <id>T1110</id>
+  </mitre>
+</rule>

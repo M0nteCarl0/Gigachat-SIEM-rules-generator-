@@ -1,21 +1,151 @@
-# Gigachat SIEM rules generator for OSSEC
-Generator SIEM rules via LLM Gigachat
+# siggen — генератор SIEM-правил для Wazuh/OSSEC
 
-# Descriptions of repository files
- - cli_version.py - сonsole version of generator SIEM rules.
- - siem_rules_generator.py - strimlit version of  generator SIEM rules.
+Detection-as-Code ассистент: по строке лога предлагает декодер и правило, но отдаёт их
+только после проверок.
 
-# Install requirements python packages
-- pip install -r requirements.txt.
-  
-# Preparation before running apps
-- Get Gigachat api credentials.
-- Add credentials token in constructor of Gigachain SDK.
-  
-# How run applications
-- python cli_version.py - run сonsole version of generator SIEM rules.
-- streamlit run siem_rules_generator.py - run strimlit version of  generator SIEM rules.
+**Главный инвариант проекта: модель предлагает — движок проверяет.**
+Человекопонятный, но нерабочий результат — основная проблема LLM-генерации правил, поэтому
+идентификаторы, XML и вердикт о пригодности формирует наш код, а работоспособность
+подтверждает `wazuh-logtest`/`ossec-logtest`, а не текст модели.
 
-# Demo video for console version SIEM rules generator for OSSEC
-https://github.com/M0nteCarl0/Gigachat-SIEM-rules-generator-/assets/5123250/30e9e4d0-aeff-4f86-b8c8-d5133eb9fec5
+## Что это даёт
 
+**SOC / инженеру детекций:** конвейер «строка лога → декодер и правило → статические
+проверки → прогон через движок → артефакты для PR», с negative-фикстурой на каждое правило
+и реестром занятых ID.
+
+**CISO:** прослеживаемость (модель, версия и хэш промпта, строка-основание, статус ревью),
+честный статус проверки вместо обещаний и отчёт, который можно приложить к ревью.
+Подробный план развития — [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+## Быстрый старт
+
+Нужен только Python 3.10+ и `pydantic`. Пакет работает без установки:
+
+```bash
+python -m siggen gen --log samples/positive.log --negative samples/negative.log
+```
+
+Либо обычная установка:
+
+```bash
+python -m pip install -e ".[dev]"     # ядро + pytest
+python -m pip install -e ".[gigachat]"  # реальная модель
+python -m pip install -e ".[ui]"        # веб-интерфейс
+```
+
+По умолчанию используется провайдер `fake` — детерминированная заглушка, которая понимает
+демонстрационные шаблоны (`login_failed`, `Failed password for`) и не ходит в сеть.
+Для реальных логов включите GigaChat:
+
+```bash
+cp .env.example .env    # заполнить GIGACHAT_CREDENTIALS
+python -m siggen gen --provider gigachat --log /path/to/log.line --negative /path/to/noise.line
+```
+
+## Команды
+
+```bash
+# Сгенерировать и проверить артефакт
+python -m siggen gen --log samples/positive.log --negative samples/negative.log \
+    --engine wazuh --out out --registry registry/rules.json
+
+# Перепроверить ранее сгенерированный артефакт (например, после обновления рулсета)
+python -m siggen validate --path out/wazuh-100100
+
+# Для CI: недоступность движка считать провалом, а не «не проверено»
+python -m siggen gen ... --require-engine
+```
+
+Коды возврата: `0` — артефакт прошёл проверки, `1` — не прошёл, `2` — ошибка ввода
+или конфигурации. Код `1` делает команду пригодной для CI-gate.
+
+Веб-интерфейс: `streamlit run siggen/ui/app.py`.
+
+## Что именно проверяется
+
+| Проверка | Уровень | Смысл |
+|---|---|---|
+| `decoder_wellformed`, `rule_wellformed` | ошибка | XML разбирается, корневой тег верный |
+| `rule_id_in_range`, `rule_id_unique` | ошибка | ID в разрешённом диапазоне и не занят |
+| `decoded_as_matches_decoder` | ошибка | правило ссылается на существующий декодер |
+| `order_fields_allowed` | ошибка | в `<order>` только поля, известные движку |
+| `order_matches_regex_groups` | ошибка | число групп захвата = числу полей `<order>` |
+| `regex_compiles` | ошибка | регулярное выражение компилируется |
+| `decoder_offset_allowed` | ошибка | допустимый `offset` |
+| `mitre_in_allowlist` | ошибка | техника ATT&CK есть в справочнике, а не выдумана |
+| `no_broad_suppression`, `no_active_response`, `level_not_zero` | ошибка | правило не подавляет всё подряд и не блокирует хосты |
+| `negative_fixture_present`, `groups_present`, `no_duplicate`, `no_source_ip_whitelist` | предупреждение | требует явного решения человека |
+
+Плюс прогон фикстур через движок: `positive` обязана сматчиться, `negative` — нет.
+Если движок недоступен, статус честно `skipped` («не проверено»), а флаг `--require-engine`
+превращает это в провал.
+
+## Прогон через настоящий движок
+
+Лаборатория описана в [`docker-compose.yml`](docker-compose.yml) (файл не поднимался
+автоматически — сверьте образ и пути со своей версией Wazuh). Смысл: `wazuh-logtest`
+должен быть доступен там, где запущен `siggen`.
+
+## Данные и секреты
+
+- Секреты — только через переменные окружения (`.env` в `.gitignore`), см. `.env.example`.
+- Проверка TLS включена всегда; отключение — явный флаг с предупреждением в лог.
+- **Движок не отправляет логи в модель.** Сейчас в модель попадает одна строка-образец,
+  которую вы передаёте руками. Маскирование и режимы работы с данными описаны в
+  [`docs/SECURITY.md`](docs/SECURITY.md).
+- Содержимое лога для модели — недоверенные данные: в промпте оно отделено маркерами,
+  и модели явно запрещено следовать инструкциям из лога.
+
+## Ограничения текущего MVP
+
+Это минимальная рабочая версия, а не продукт. Честный список:
+
+- **Прогон через Wazuh не проверялся авторами в этой среде**: образ не поднимался.
+  Логика runner-а покрыта тестами на тестовом двойнике, но реальный `wazuh-logtest`
+  нужно прогнать у себя. При первом запуске ожидайте правок в `siggen/engine.py`.
+- Провайдер GigaChat написан, но автотестами не покрыт (в CI не ходим в сеть).
+- Веб-интерфейс автотестами не покрыт.
+- Обрабатывается одна строка-образец за прогон: нет корпуса логов, кластеризации
+  и анализа покрытия (Фаза 4 в `docs/ROADMAP.md`).
+- Нет Sigma как входного формата и нет бэкендов Splunk/Elastic (Фаза 3).
+- Compliance-маппинг (PCI DSS, ISO 27001, ФСТЭК) не реализован (Фаза 5).
+- `FakeProvider` знает два демонстрационных шаблона — это заглушка для тестов, не детектор.
+- `rule_id_min`/`rule_id_max` по умолчанию (100100–120000) нужно сверить с диапазоном
+  пользовательских правил вашего менеджера.
+
+## Структура
+
+```
+siggen/
+  cli.py          команды gen / validate
+  pipeline.py     оркестрация, реестр ID, отчёт
+  models.py       контракты: кандидат от модели → проверенный артефакт
+  providers.py    LlmProvider: fake и gigachat
+  prompts.py      загрузка версионированных промптов
+  emit.py         сборка XML (наш код, не модель)
+  validation.py   статические проверки и политика проекта
+  engine.py       прогон через wazuh-logtest/ossec-logtest
+  data.py         allowlist-ы полей и техник ATT&CK
+  ui/app.py       Streamlit
+prompts/detection.md    промпт с версией (хэш попадает в provenance)
+samples/                демонстрационные строки логов
+examples/               пример результата прогона
+tests/                  тесты (без сети и без токена)
+docs/                   ROADMAP, ARCHITECTURE, SECURITY
+```
+
+## Разработка
+
+```bash
+python -m pytest
+```
+
+Тесты не требуют ни сети, ни токена, ни установленного движка: модель подменяется
+`FakeProvider`, `wazuh-logtest` — тестовым двойником в `tests/fixtures/fake_logtest.py`.
+
+## История
+
+Первая версия проекта была демонстрацией «LLM пишет XML OSSEC-декодера»
+(видео: https://github.com/M0nteCarl0/Gigachat-SIEM-rules-generator-/assets/5123250/30e9e4d0-aeff-4f86-b8c8-d5133eb9fec5).
+Она заменена этим конвейером: идентификаторы, XML и вердикт формирует код, а не модель.

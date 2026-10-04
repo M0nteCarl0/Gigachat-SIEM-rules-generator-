@@ -1,0 +1,38 @@
+# Лаборатория для прогона правил через настоящий движок анализа.
+#
+# ВНИМАНИЕ: файл не поднимался автоматически и не проверялся в CI.
+# Образ и путь рулсета отличаются между версиями Wazuh — сверьте с документацией
+# своей версии перед использованием. Версия задаётся переменной WAZUH_VERSION.
+#
+# Назначение: дать правилу вердикт «прошёл движок», а не «не проверено».
+# Прод-менеджер сюда не подключается, в прод-рулсет ничего не пишется.
+#
+# Порядок работы:
+#   1. docker compose up -d
+#   2. положить артефакт в лабораторный рулсет:
+#        docker compose cp examples/myapp-login-failed/local_rules.xml \
+#          wazuh-manager:/var/ossec/etc/rules/local_rules.xml
+#   3. проверить конфигурацию и правило вручную:
+#        docker compose exec wazuh-manager /var/ossec/bin/wazuh-analysisd -t
+#        docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest \
+#          -U "100100:10:myapp-login" < samples/positive.log
+#
+# Чтобы `siggen gen` / `siggen validate` могли прогонять фикстуры автоматически,
+# бинарь wazuh-logtest должен быть доступен в PATH там, где запущен siggen:
+# либо siggen запускается рядом с менеджером, либо в PATH кладётся обёртка,
+# вызывающая движок в контейнере.
+
+services:
+  wazuh-manager:
+    image: wazuh/wazuh-manager:${WAZUH_VERSION:-4.9.2}
+    container_name: siggen-wazuh-lab
+    restart: unless-stopped
+    volumes:
+      - wazuh-manager-data:/var/ossec/data
+    ports:
+      - "1514:1514"
+      - "1515:1515"
+      - "55000:55000"
+
+volumes:
+  wazuh-manager-data:

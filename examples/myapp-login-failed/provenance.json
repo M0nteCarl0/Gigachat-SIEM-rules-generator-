@@ -1,0 +1,12 @@
+{
+  "provider": "fake",
+  "model": "fake-deterministic",
+  "prompt_name": "detection",
+  "prompt_version": "1",
+  "prompt_hash": "8be0d3a2da69fad9d798cc5d8447464c97376a82c46602b21e7648bad781af0e",
+  "engine": "wazuh",
+  "generated_at": "2026-10-04T08:02:21.388766Z",
+  "log_sample": "2024-05-12T10:15:03Z host1 myapp[2412]: login_failed user=admin src=10.0.0.5 attempts=3",
+  "confidence": 0.9,
+  "rationale": "Префикс myapp[pid] задаёт источник, 'login_failed' — признак события, user= и src= разбираются в srcuser/srcip, attempts= поглощается без захвата."
+}

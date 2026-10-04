@@ -1,0 +1,70 @@
+{
+  "rule_id": 100100,
+  "engine": "wazuh",
+  "checks": [
+    {
+      "name": "decoder_wellformed",
+      "passed": true,
+      "severity": "error",
+      "detail": "XML разобран, корневой тег совпадает"
+    },
+    {
+      "name": "rule_wellformed",
+      "passed": true,
+      "severity": "error",
+      "detail": "XML разобран, корневой тег совпадает"
+    },
+    {
+      "name": "rule_id_in_range",
+      "passed": true,
+      "severity": "error",
+      "detail": "id=100100, допустимый диапазон [100100; 120000)"
+    },
+    {
+      "name": "rule_id_unique",
+      "passed": true,
+      "severity": "error",
+      "detail": "свободен"
+    },
+    {
+      "name": "decoded_as_matches_decoder",
+      "passed": true,
+      "severity": "error",
+      "detail": "decoded_as='myapp-login', декодер='myapp-login'"
+    },
+    {
+      "name": "order_fields_allowed",
+      "passed": true,
+      "severity": "error",
+      "detail": "все поля допустимы"
+    },
+    {
+      "name": "order_matches_regex_groups",
+      "passed": true,
+      "severity": "error",
+      "detail": "групп захвата 2, полей в <order> 2"
+    },
+    {
+      "name": "regex_compiles",
+      "passed": true,
+      "severity": "error",
+      "detail": "регулярное выражение компилируется"
+    },
+    {
+      "name": "decoder_offset_allowed",
+      "passed": true,
+      "severity": "error",
+      "detail": "offset='after_prematch'"
+    },
+    {
+      "name": "mitre_in_allowlist",
+      "passed": true,
+      "severity": "error",
+      "detail": "техники подтверждены справочником"
+    }
+  ],
+  "engine_status": "skipped",
+  "engine_detail": "движок wazuh не найден в PATH: правило не проверено. Поднимите лабораторию из docker-compose.yml или укажите путь к бинарю.",
+  "engine_raw": "",
+  "requires_manual_review": []
+}

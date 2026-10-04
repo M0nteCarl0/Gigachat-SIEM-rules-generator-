@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "engines": {
+    "wazuh": {
+      "rules": [
+        {
+          "rule_id": 100100,
+          "fingerprint": "ef6ef2ac4261d1f856993d24dea712a8c88fb54be22d8cb19b93c7337380edde",
+          "description": "MyApp: повторный неуспешный вход для пользователя $(srcuser) с $(srcip)",
+          "artifact_dir": "out/wazuh-100100",
+          "created_at": "2026-10-04T08:02:21.392260+00:00"
+        }
+      ]
+    }
+  }
+}
