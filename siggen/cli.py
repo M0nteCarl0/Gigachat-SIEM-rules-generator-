@@ -79,6 +79,13 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--engine", choices=["wazuh", "ossec"], default=None,
                         help="целевой движок (по умолчанию из SIGGEN_ENGINE или wazuh)")
     parser.add_argument("--registry", default=None, help="путь к реестру ID")
+    parser.add_argument(
+        "--logtest", default=None, metavar="КОМАНДА",
+        help=(
+            "явная команда запуска движка, если он не в PATH, а, например, в контейнере: "
+            "'docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest'"
+        ),
+    )
     parser.add_argument("--require-engine", action="store_true",
                         help="недоступность движка валидации считать провалом (для CI)")
     parser.add_argument("--json", action="store_true", dest="as_json",
@@ -112,6 +119,7 @@ def _settings(args: argparse.Namespace) -> Settings:
         "engine": args.engine,
         "registry_path": Path(args.registry) if args.registry else None,
         "require_engine": True if args.require_engine else None,
+        "logtest_command": getattr(args, "logtest", None),
     }
     provider = getattr(args, "provider", None)
     if provider:
@@ -160,8 +168,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
         else {}
     )
     engine = args.engine or provenance.get("engine") or "wazuh"
-    settings = Settings.from_env(engine=engine, registry_path=Path(args.registry) if args.registry else None,
-                                 require_engine=True if args.require_engine else None)
+    settings = Settings.from_env(
+        engine=engine,
+        registry_path=Path(args.registry) if args.registry else None,
+        require_engine=True if args.require_engine else None,
+        logtest_command=getattr(args, "logtest", None),
+    )
 
     candidate = load_candidate(directory)
     rule_xml = (directory / "rule.xml").read_text(encoding="utf-8")
@@ -185,7 +197,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         has_negative_sample=negative is not None,
     )
 
-    runner = LogtestRunner(settings.engine, timeout=settings.engine_timeout)
+    runner = LogtestRunner.from_settings(settings)
     outcome = runner.verify(
         positive=positive,
         negative=negative,

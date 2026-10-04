@@ -55,6 +55,9 @@ python -m siggen validate --path out/wazuh-100100
 
 # Для CI: недоступность движка считать провалом, а не «не проверено»
 python -m siggen gen ... --require-engine
+
+# Движок не в PATH, а в контейнере лаборатории:
+python -m siggen gen ... --logtest "docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest"
 ```
 
 Коды возврата: `0` — артефакт прошёл проверки, `1` — не прошёл, `2` — ошибка ввода
@@ -84,8 +87,41 @@ python -m siggen gen ... --require-engine
 ## Прогон через настоящий движок
 
 Лаборатория описана в [`docker-compose.yml`](docker-compose.yml) (файл не поднимался
-автоматически — сверьте образ и пути со своей версией Wazuh). Смысл: `wazuh-logtest`
-должен быть доступен там, где запущен `siggen`.
+автоматически — сверьте образ и пути со своей версией Wazuh). Движок должен быть доступен
+там, где запущен `siggen`. Два способа:
+
+**1. `wazuh-logtest` в PATH** — ничего дополнительно указывать не нужно.
+
+**2. Движок внутри контейнера** — передайте команду целиком:
+
+```bash
+python -m siggen gen \
+  --log samples/positive.log --negative samples/negative.log \
+  --logtest "docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest"
+```
+
+То же самое можно задать переменной окружения `SIGGEN_LOGTEST` (см. `.env.example`).
+
+> **Осторожно, PowerShell.** В аргументах командной строки PowerShell съедает вложенные
+> кавычки, поэтому путь с пробелами через `--logtest` передать не получится. Такие пути
+> задавайте переменной окружения — она передаётся дословно:
+>
+> ```powershell
+> $env:SIGGEN_LOGTEST = '"C:\Program Files\wazuh\bin\wazuh-logtest.exe"'
+> python -m siggen gen ...
+> ```
+
+Проверка того, что правило действительно срабатывает, вынесена в отдельные тесты
+(пропускаются, пока лаборатория не поднята):
+
+```bash
+SIGGEN_LAB=1 \
+SIGGEN_LOGTEST="docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest" \
+  python -m pytest -m integration -v
+```
+
+Порядок развёртывания примера правил на стенде — в docstring
+[`tests/test_integration_engine.py`](tests/test_integration_engine.py).
 
 ## Данные и секреты
 
@@ -101,9 +137,11 @@ python -m siggen gen ... --require-engine
 
 Это минимальная рабочая версия, а не продукт. Честный список:
 
-- **Прогон через Wazuh не проверялся авторами в этой среде**: образ не поднимался.
-  Логика runner-а покрыта тестами на тестовом двойнике, но реальный `wazuh-logtest`
-  нужно прогнать у себя. При первом запуске ожидайте правок в `siggen/engine.py`.
+- **Реальный `wazuh-logtest` не прогонялся**: демон Docker не был запущен, стенд не поднимался.
+  Связка «внешняя команда движка → коды возврата → вердикт» проверена end-to-end (`--logtest`,
+  `SIGGEN_LOGTEST` и тестовый двойник), но соответствие нашего XML и regex-якорей требованиям
+  настоящего движка нужно подтвердить в лаборатории: см. `tests/test_integration_engine.py`.
+  При первом запуске ожидайте правок в `siggen/engine.py`.
 - Провайдер GigaChat написан, но автотестами не покрыт (в CI не ходим в сеть).
 - Веб-интерфейс автотестами не покрыт.
 - Обрабатывается одна строка-образец за прогон: нет корпуса логов, кластеризации

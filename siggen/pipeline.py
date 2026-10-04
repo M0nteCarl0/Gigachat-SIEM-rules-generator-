@@ -106,7 +106,8 @@ class Registry:
                 "fingerprint": fingerprint,
                 "description": description,
                 "artifact_dir": normalized,
-                "created_at": utcnow().isoformat(),
+                # Тот же формат времени, что в provenance.json (pydantic пишет 'Z').
+                "created_at": utcnow().isoformat().replace("+00:00", "Z"),
             }
         )
 
@@ -297,7 +298,7 @@ def generate(
     )
 
     # 5. Прогон через движок.
-    runner = runner or LogtestRunner(settings.engine, timeout=settings.engine_timeout)
+    runner = runner or LogtestRunner.from_settings(settings)
     outcome = runner.verify(
         positive=sample,
         negative=negative,

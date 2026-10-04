@@ -6,7 +6,8 @@ import shutil
 
 import pytest
 
-from siggen.engine import LogtestRunner
+from siggen.config import Settings
+from siggen.engine import LogtestRunner, parse_command
 
 from conftest import NEGATIVE, POSITIVE
 
@@ -77,3 +78,55 @@ def test_verify_skips_negative_when_engine_unavailable(monkeypatch: pytest.Monke
         positive=POSITIVE, negative=NEGATIVE, rule_id=RULE_ID, level=LEVEL, decoder=DECODER
     )
     assert outcome.status == "skipped"
+
+
+# --- разбор команды движка ------------------------------------------------------
+
+
+def test_parse_command_splits_docker_command() -> None:
+    command = parse_command(
+        "docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest"
+    )
+    assert command == [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "wazuh-manager",
+        "/var/ossec/bin/wazuh-logtest",
+    ]
+
+
+def test_parse_command_keeps_windows_paths_with_spaces() -> None:
+    """Обратный слэш не экранирование: иначе пути Windows разваливаются."""
+    command = parse_command(r'"C:\Program Files\Python312\python.exe" script.py')
+    assert command == [r"C:\Program Files\Python312\python.exe", "script.py"]
+
+
+def test_parse_command_ignores_extra_spaces() -> None:
+    assert parse_command("   wazuh-logtest   ") == ["wazuh-logtest"]
+
+
+def test_parse_command_rejects_unbalanced_quote() -> None:
+    with pytest.raises(Exception, match="кавычка"):
+        parse_command('"broken')
+
+
+def test_parse_command_rejects_empty_value() -> None:
+    with pytest.raises(Exception, match="пуста"):
+        parse_command("   ")
+
+
+# --- сборка runner-а по настройкам ---------------------------------------------
+
+
+def test_from_settings_uses_explicit_command(fake_binary: list[str]) -> None:
+    command = " ".join(f'"{part}"' for part in fake_binary)
+    runner = LogtestRunner.from_settings(Settings(logtest_command=command))
+    assert runner.available is True
+    assert runner.test_line(POSITIVE, RULE_ID, LEVEL, DECODER).status == "passed"
+
+
+def test_from_settings_falls_back_to_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    assert LogtestRunner.from_settings(Settings()).available is False

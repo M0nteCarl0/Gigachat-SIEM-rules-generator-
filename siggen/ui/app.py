@@ -19,7 +19,6 @@ if __package__ in (None, ""):  # pragma: no cover - зависит от спос
 import streamlit as st  # noqa: E402
 
 from siggen.config import Settings  # noqa: E402
-from siggen.engine import LogtestRunner  # noqa: E402
 from siggen.models import ConfigurationError, ProviderError  # noqa: E402
 from siggen.pipeline import GenerateOptions, Registry, generate  # noqa: E402
 from siggen.prompts import load_prompt  # noqa: E402
@@ -43,6 +42,11 @@ with st.sidebar:
         "Требовать прогон через движок", value=False,
         help="Включите в лаборатории: тогда недоступность wazuh-logtest даст провал, а не skip.",
     )
+    logtest_command = st.text_input(
+        "Команда движка", value="",
+        placeholder="docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest",
+        help="Заполните, если wazuh-logtest не в PATH, а например внутри контейнера.",
+    )
     st.divider()
     st.caption(
         f"Реестр ID: `{Settings().registry_path}` — заполняется только для артефактов, "
@@ -61,8 +65,12 @@ negative = st.text_area(
 
 if st.button("Сгенерировать и проверить", type="primary"):
     try:
-        settings = Settings.from_env(engine=engine, provider=provider_name,
-                                     require_engine=require_engine or None)
+        settings = Settings.from_env(
+            engine=engine,
+            provider=provider_name,
+            require_engine=require_engine or None,
+            logtest_command=logtest_command or None,
+        )
         out_dir = Path(tempfile.mkdtemp(prefix="siggen-ui-"))
         result = generate(
             log_input=positive,
@@ -71,7 +79,6 @@ if st.button("Сгенерировать и проверить", type="primary")
             provider=build_provider(settings),
             prompt=load_prompt(),
             registry=Registry(settings.registry_path),
-            runner=LogtestRunner(settings.engine, timeout=settings.engine_timeout),
             options=GenerateOptions(out_dir=out_dir, write_artifacts=True),
         )
         st.session_state["result"] = result

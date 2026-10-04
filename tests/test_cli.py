@@ -106,3 +106,39 @@ def test_validate_with_require_engine_fails(tmp_path: Path) -> None:
 
 def test_validate_reports_missing_directory(tmp_path: Path) -> None:
     assert main(["validate", "--path", str(tmp_path / "absent")]) == EXIT_USAGE
+
+
+# --- движок, доступный по явной команде ----------------------------------------
+
+
+def _logtest_command(fake_binary: list[str]) -> str:
+    """Кавычки обязательны: путь к интерпретатору содержит пробелы."""
+    return " ".join(f'"{part}"' for part in fake_binary)
+
+
+def test_logtest_option_runs_engine_check(
+    tmp_path: Path, fake_binary: list[str], capsys: pytest.CaptureFixture
+) -> None:
+    """С --logtest прогон через движок становится частью вердикта, а не skip."""
+    exit_code = main(
+        _gen_args(tmp_path, "--logtest", _logtest_command(fake_binary), "--require-engine")
+    )
+    assert exit_code == EXIT_OK
+    assert "passed" in capsys.readouterr().out
+
+
+def test_logtest_option_blocks_false_positive(
+    tmp_path: Path, fake_binary: list[str]
+) -> None:
+    """Negative-пример совпадает с positive: движок отвергает правило, релиз блокируется."""
+    noisy = tmp_path / "noise.log"
+    noisy.write_text(POSITIVE + "\n", encoding="utf-8")
+    args = [
+        "gen",
+        "--log", str(SAMPLES / "positive.log"),
+        "--negative", str(noisy),
+        "--out", str(tmp_path / "out"),
+        "--registry", str(tmp_path / "registry.json"),
+        "--logtest", _logtest_command(fake_binary),
+    ]
+    assert main(args) == EXIT_VALIDATION_FAILED

@@ -14,7 +14,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Sequence
 
-from .models import Engine, EngineStatus
+from .config import Settings
+from .models import ConfigurationError, Engine, EngineStatus
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,47 @@ _UNSUPPORTED_OPTION = (
     "unknown option",
     "unrecognized argument",
 )
+
+
+def parse_command(value: str) -> list[str]:
+    """Разбирает командную строку движка на токены.
+
+    Кавычки группируют слова, обратный слэш экранированием не считается —
+    иначе Windows-пути вида `C:\\Program Files\\...` разваливаются.
+    Нужен, чтобы движок можно было взять не только из PATH, но и из контейнера:
+
+        docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest
+    """
+    tokens: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    started = False
+
+    for char in value:
+        if quote is not None:
+            if char == quote:
+                quote = None
+            else:
+                current.append(char)
+                started = True
+        elif char in ("'", '"'):
+            quote = char
+            started = True
+        elif char.isspace():
+            if started:
+                tokens.append("".join(current))
+                current, started = [], False
+        else:
+            current.append(char)
+            started = True
+
+    if quote is not None:
+        raise ConfigurationError(f"в команде движка не закрыта кавычка: {value!r}")
+    if started:
+        tokens.append("".join(current))
+    if not tokens:
+        raise ConfigurationError("команда движка пуста")
+    return tokens
 
 
 @dataclass(frozen=True)
@@ -60,6 +102,21 @@ class LogtestRunner:
         self.engine = engine
         self.timeout = timeout
         self._binary = list(binary) if binary else self.detect(engine)
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "LogtestRunner":
+        """Собирает runner по настройкам.
+
+        Если задана явная команда (`--logtest`, `SIGGEN_LOGTEST`), используется она:
+        так движок можно взять из контейнера, где нет локального бинаря.
+        """
+        if settings.logtest_command:
+            return cls(
+                settings.engine,
+                binary=parse_command(settings.logtest_command),
+                timeout=settings.engine_timeout,
+            )
+        return cls(settings.engine, timeout=settings.engine_timeout)
 
     @staticmethod
     def detect(engine: Engine) -> list[str] | None:

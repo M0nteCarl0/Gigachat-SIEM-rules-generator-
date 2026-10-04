@@ -16,11 +16,15 @@
 #        docker compose exec wazuh-manager /var/ossec/bin/wazuh-analysisd -t
 #        docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest \
 #          -U "100100:10:myapp-login" < samples/positive.log
+#   4. прогнать проверку из siggen (движок живёт в контейнере, поэтому команда задаётся явно):
+#        python -m siggen validate --path examples/myapp-login-failed \
+#          --logtest "docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest"
+#   5. интеграционные тесты против живого движка:
+#        SIGGEN_LAB=1 \
+#        SIGGEN_LOGTEST="docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest" \
+#          python -m pytest -m integration -v
 #
-# Чтобы `siggen gen` / `siggen validate` могли прогонять фикстуры автоматически,
-# бинарь wazuh-logtest должен быть доступен в PATH там, где запущен siggen:
-# либо siggen запускается рядом с менеджером, либо в PATH кладётся обёртка,
-# вызывающая движок в контейнере.
+# Прод-менеджер сюда не подключается, в прод-рулсет ничего не пишется.
 
 services:
   wazuh-manager:

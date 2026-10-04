@@ -225,6 +225,11 @@ wazuh-logtest -U "<rule_id>:<level>:<decoder>"            # exit 0 → прав�
 Для интеграции без shell — Wazuh Server API `logtest` (JWT, `PUT` для проверки строки, `DELETE` для снятия сессии).
 Для OSSEC — `ossec-logtest` через тот же интерфейс runner-а.
 
+Команда движка берётся либо из `PATH`, либо задаётся явно (`--logtest`, `SIGGEN_LOGTEST`):
+в лаборатории `wazuh-logtest` живёт внутри контейнера, и без этого его не вызвать. Реализация —
+`LogtestRunner.from_settings` в `siggen/engine.py`; разбор командной строки не считает обратный
+слэш экранированием, иначе пути Windows разваливаются.
+
 Фикстуры каждого правила:
 ```
 rules/100042/

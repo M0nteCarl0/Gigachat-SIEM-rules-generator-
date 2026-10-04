@@ -30,3 +30,6 @@ packages = ["siggen", "siggen.ui"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: требует настоящий движок Wazuh/OSSEC; пропускается без SIGGEN_LAB=1",
+]

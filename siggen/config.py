@@ -51,6 +51,9 @@ class Settings:
     max_xml_bytes: int = 256 * 1024
     #: Таймаут запуска движка валидации.
     engine_timeout: float = 30.0
+    #: Явная команда запуска движка. Нужна, когда `wazuh-logtest` живёт в контейнере:
+    #: например "docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest".
+    logtest_command: str | None = None
 
     # --- GigaChat ---
     gigachat_credentials: str | None = None
@@ -85,6 +88,7 @@ class Settings:
             "rule_id_max": _env_int("SIGGEN_RULE_ID_MAX", 120_000),
             "registry_path": Path(os.getenv("SIGGEN_REGISTRY", "registry/rules.json")),
             "require_engine": _env_bool("SIGGEN_REQUIRE_ENGINE", False),
+            "logtest_command": os.getenv("SIGGEN_LOGTEST") or None,
             "gigachat_credentials": os.getenv("GIGACHAT_CREDENTIALS") or None,
             "gigachat_scope": os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"),
             "gigachat_model": os.getenv("GIGACHAT_MODEL", "GigaChat"),
