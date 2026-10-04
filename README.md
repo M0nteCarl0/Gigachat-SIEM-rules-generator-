@@ -1,189 +1,230 @@
-# siggen — генератор SIEM-правил для Wazuh/OSSEC
+# siggen
 
-Detection-as-Code ассистент: по строке лога предлагает декодер и правило, но отдаёт их
-только после проверок.
+An LLM drafts a Wazuh or OSSEC rule. Then siggen tries to prove it wrong.
 
-**Главный инвариант проекта: модель предлагает — движок проверяет.**
-Человекопонятный, но нерабочий результат — основная проблема LLM-генерации правил, поэтому
-идентификаторы, XML и вердикт о пригодности формирует наш код, а работоспособность
-подтверждает `wazuh-logtest`/`ossec-logtest`, а не текст модели.
+Hand it one line from your logs and it comes back with a decoder, a rule, the
+fixtures to test them with, and a report listing what it checked. The interesting
+part is what it refuses to do: it won't call a rule ready until something other
+than the language model says so.
 
-## Что это даёт
+## Why bother
 
-**SOC / инженеру детекций:** конвейер «строка лога → декодер и правило → статические
-проверки → прогон через движок → артефакты для PR», с negative-фикстурой на каждое правило
-и реестром занятых ID.
+Ask any LLM for an OSSEC decoder and you'll get XML that looks right. There's a
+`<decoder>` tag, a plausible regex, a sensible `<order>`. It's also wrong fairly
+often, in ways nobody notices until it's deployed:
 
-**CISO:** прослеживаемость (модель, версия и хэш промпта, строка-основание, статус ревью),
-честный статус проверки вместо обещаний и отчёт, который можно приложить к ревью.
-Подробный план развития — [`docs/ROADMAP.md`](docs/ROADMAP.md).
+- the regex has three capture groups and `<order>` declares two, so the decoder
+  never loads;
+- `<decoded_as>` names a decoder that doesn't exist;
+- `<if_sid>` points at a rule someone retired two versions ago;
+- the rule is broad enough to quietly swallow the alerts it was supposed to raise.
 
-## Быстрый старт
+None of that shows up in a chat window. All of it shows up in `wazuh-logtest`.
 
-Нужен только Python 3.10+ и `pydantic`. Пакет работает без установки:
+So here the model writes a *draft* and nothing else. Rule IDs, the XML, and the
+verdict all come from siggen.
+
+## Quick start, offline
+
+No API key, no network, no Wazuh install. The bundled `fake` provider is a
+deterministic stub that recognizes two demo log shapes, so the whole pipeline runs
+offline. You need Python 3.10+ and `pydantic`.
 
 ```bash
+git clone https://github.com/M0nteCarl0/Gigachat-SIEM-rules-generator-.git
+cd Gigachat-SIEM-rules-generator-
 python -m siggen gen --log samples/positive.log --negative samples/negative.log
 ```
 
-Либо обычная установка:
-
-```bash
-python -m pip install -e ".[dev]"     # ядро + pytest
-python -m pip install -e ".[gigachat]"  # реальная модель
-python -m pip install -e ".[ui]"        # веб-интерфейс
+```
+Правило:      wazuh/100100 (level=10)
+Описание:     MyApp: повторный неуспешный вход для пользователя $(srcuser) с $(srcip)
+Итог:         ГОТОВО К РЕВЬЮ
+Проверки:     10 ok, 0 fail, 0 warn
+Движок:       skipped — движок wazuh не найден в PATH: правило не проверено. Поднимите лабораторию из docker-compose.yml или укажите путь к бинарю.
+Артефакты:    out\wazuh-100100
+Отчёт:        out\report.md
 ```
 
-По умолчанию используется провайдер `fake` — детерминированная заглушка, которая понимает
-демонстрационные шаблоны (`login_failed`, `Failed password for`) и не ходит в сеть.
-Для реальных логов включите GigaChat:
+`--log` takes a file and siggen uses its first non-empty line, so pointing it at a
+whole log file won't break anything. It also won't do much yet; see
+[Known gaps](#known-gaps).
 
-```bash
-cp .env.example .env    # заполнить GIGACHAT_CREDENTIALS
-python -m siggen gen --provider gigachat --log /path/to/log.line --negative /path/to/noise.line
+The CLI prints in Russian at the moment, which is covered under Known gaps below.
+Note the `skipped` on the engine line: siggen could not confirm the rule, and says
+so instead of implying success.
+
+## What a run leaves behind
+
+Each run writes a self-contained directory you can drop into a pull request:
+
+```
+out/wazuh-100100/
+  candidate.json     the model's proposal, after schema validation
+  decoder.xml        decoder XML, assembled by siggen
+  rule.xml           rule XML, assembled by siggen
+  local_rules.xml    both wrapped in a <group>, ready to deploy
+  positive.log       the line that must match
+  negative.log       the line that must not
+  provenance.json    provider, model, prompt version and hash, source line
+  validation.json    every check, plus the engine verdict
+  report.md          the same thing, for a human
 ```
 
-## Команды
+Here's the decoder from that run:
+
+```xml
+<decoder name="myapp-login">
+  <program_name>^myapp$</program_name>
+  <prematch>login_failed </prematch>
+  <regex offset="after_prematch">^user=(\S+) src=(\S+) attempts=\S+$</regex>
+  <order>srcuser, srcip</order>
+</decoder>
+```
+
+Look at the regex: two capture groups for the two fields in `<order>`, explicit
+anchors, and the uninteresting `attempts=` tail consumed without capturing it. That
+last detail matters. A third group with no corresponding field is one of the classic
+ways a decoder gets rejected at load time, and it's checked mechanically rather than
+left to the model's judgment.
+
+## What gets checked
+
+A clean run reports ten checks:
+
+| Check | Fails when |
+|---|---|
+| `decoder_wellformed`, `rule_wellformed` | the XML doesn't parse, or the root tag is wrong |
+| `rule_id_in_range`, `rule_id_unique` | the ID is outside your range, or already taken |
+| `decoded_as_matches_decoder` | the rule references a decoder that isn't in the artifact |
+| `order_fields_allowed` | `<order>` names a field the engine doesn't know |
+| `order_matches_regex_groups` | capture groups and declared fields don't line up |
+| `regex_compiles` | the pattern is broken |
+| `decoder_offset_allowed` | `offset` isn't one of the values the engine accepts |
+| `mitre_in_allowlist` | the technique isn't listed in `siggen/data.py` |
+
+Seven more checks stay quiet unless they have something to say, so a clean report
+isn't cluttered with rows that always pass:
+
+| Check | Flags |
+|---|---|
+| `no_broad_suppression` | a rule that matches everything: `.*`, an empty match |
+| `no_active_response` | generated rules never block hosts on their own |
+| `level_not_zero`, `level_reasonable` | level 0, or a level too low to be a detection |
+| `no_source_ip_whitelist` | the rule narrows itself to a single source |
+| `groups_present` | the rule has no `<group>` |
+| `negative_fixture_present` | no negative sample, so nothing proves the rule stays quiet |
+| `no_duplicate` | a rule with the same fingerprint is already in the registry |
+
+Errors block the run. Warnings don't, but they land in the report's "needs review"
+list. A run that doesn't pass leaves the rule ID unallocated, so a rejected draft
+doesn't burn a number.
+
+## The engine is the real judge
+
+Everything above is pre-flight. The part that counts is this: siggen feeds your
+`positive` line to the engine and expects a match, then feeds the `negative` line and
+expects silence. A rule that fires on both is a false positive, and it's rejected.
 
 ```bash
-# Сгенерировать и проверить артефакт
+# wazuh-logtest on PATH: nothing extra to configure
+python -m siggen gen --log samples/positive.log --negative samples/negative.log
+
+# engine inside the lab container
 python -m siggen gen --log samples/positive.log --negative samples/negative.log \
-    --engine wazuh --out out --registry registry/rules.json
-
-# Перепроверить ранее сгенерированный артефакт (например, после обновления рулсета)
-python -m siggen validate --path out/wazuh-100100
-
-# Для CI: недоступность движка считать провалом, а не «не проверено»
-python -m siggen gen ... --require-engine
-
-# Движок не в PATH, а в контейнере лаборатории:
-python -m siggen gen ... --logtest "docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest"
-```
-
-Коды возврата: `0` — артефакт прошёл проверки, `1` — не прошёл, `2` — ошибка ввода
-или конфигурации. Код `1` делает команду пригодной для CI-gate.
-
-Веб-интерфейс: `streamlit run siggen/ui/app.py`.
-
-## Что именно проверяется
-
-| Проверка | Уровень | Смысл |
-|---|---|---|
-| `decoder_wellformed`, `rule_wellformed` | ошибка | XML разбирается, корневой тег верный |
-| `rule_id_in_range`, `rule_id_unique` | ошибка | ID в разрешённом диапазоне и не занят |
-| `decoded_as_matches_decoder` | ошибка | правило ссылается на существующий декодер |
-| `order_fields_allowed` | ошибка | в `<order>` только поля, известные движку |
-| `order_matches_regex_groups` | ошибка | число групп захвата = числу полей `<order>` |
-| `regex_compiles` | ошибка | регулярное выражение компилируется |
-| `decoder_offset_allowed` | ошибка | допустимый `offset` |
-| `mitre_in_allowlist` | ошибка | техника ATT&CK есть в справочнике, а не выдумана |
-| `no_broad_suppression`, `no_active_response`, `level_not_zero` | ошибка | правило не подавляет всё подряд и не блокирует хосты |
-| `negative_fixture_present`, `groups_present`, `no_duplicate`, `no_source_ip_whitelist` | предупреждение | требует явного решения человека |
-
-Плюс прогон фикстур через движок: `positive` обязана сматчиться, `negative` — нет.
-Если движок недоступен, статус честно `skipped` («не проверено»), а флаг `--require-engine`
-превращает это в провал.
-
-## Прогон через настоящий движок
-
-Лаборатория описана в [`docker-compose.yml`](docker-compose.yml) (файл не поднимался
-автоматически — сверьте образ и пути со своей версией Wazuh). Движок должен быть доступен
-там, где запущен `siggen`. Два способа:
-
-**1. `wazuh-logtest` в PATH** — ничего дополнительно указывать не нужно.
-
-**2. Движок внутри контейнера** — передайте команду целиком:
-
-```bash
-python -m siggen gen \
-  --log samples/positive.log --negative samples/negative.log \
   --logtest "docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest"
 ```
 
-То же самое можно задать переменной окружения `SIGGEN_LOGTEST` (см. `.env.example`).
+If the engine isn't reachable, the status is `skipped` and the report says the rule is
+unverified. If you'd rather that be a hard failure, add `--require-engine` and it
+becomes one. That flag is what you want in CI.
 
-> **Осторожно, PowerShell.** В аргументах командной строки PowerShell съедает вложенные
-> кавычки, поэтому путь с пробелами через `--logtest` передать не получится. Такие пути
-> задавайте переменной окружения — она передаётся дословно:
->
-> ```powershell
-> $env:SIGGEN_LOGTEST = '"C:\Program Files\wazuh\bin\wazuh-logtest.exe"'
-> python -m siggen gen ...
-> ```
+`docker-compose.yml` brings up a throwaway Wazuh manager for exactly this purpose; the
+steps for deploying the sample ruleset into it are in the file's header comments. Once
+it's up, `python -m pytest -m integration` checks a generated rule against the real
+binary. Those tests skip by default, and `tests/test_integration_engine.py` explains
+how to enable them.
 
-Проверка того, что правило действительно срабатывает, вынесена в отдельные тесты
-(пропускаются, пока лаборатория не поднята):
+## Using a real model
 
 ```bash
-SIGGEN_LAB=1 \
-SIGGEN_LOGTEST="docker compose exec -T wazuh-manager /var/ossec/bin/wazuh-logtest" \
-  python -m pytest -m integration -v
+# Credentials come from the environment. .env.example lists the variable names;
+# nothing loads a .env file for you, so export them in your shell or your runner.
+export GIGACHAT_CREDENTIALS="..."          # PowerShell: $env:GIGACHAT_CREDENTIALS = "..."
+python -m siggen gen --provider gigachat --log my.log --negative noise.log
 ```
 
-Порядок развёртывания примера правил на стенде — в docstring
-[`tests/test_integration_engine.py`](tests/test_integration_engine.py).
+Credentials are read from the environment only, and TLS verification is on by
+default. The switch to turn it off exists, but it logs a warning when you use it,
+because that setting mostly helps whoever is sitting between you and the API.
 
-## Данные и секреты
+The prompt lives in `prompts/detection.md` and carries a version number. Its SHA-256
+goes into every `provenance.json`, so when a rule turns out to be noisy six months
+later you can still tell which wording produced it.
 
-- Секреты — только через переменные окружения (`.env` в `.gitignore`), см. `.env.example`.
-- Проверка TLS включена всегда; отключение — явный флаг с предупреждением в лог.
-- **Движок не отправляет логи в модель.** Сейчас в модель попадает одна строка-образец,
-  которую вы передаёте руками. Маскирование и режимы работы с данными описаны в
-  [`docs/SECURITY.md`](docs/SECURITY.md).
-- Содержимое лога для модели — недоверенные данные: в промпте оно отделено маркерами,
-  и модели явно запрещено следовать инструкциям из лога.
+## Known gaps
 
-## Ограничения текущего MVP
+This is an early MVP, and the honest list is longer than the feature list.
 
-Это минимальная рабочая версия, а не продукт. Честный список:
+- **No real Wazuh run yet.** The lab has never been brought up: no Docker daemon was
+  available when this was written. The wiring from an external engine command through
+  the exit codes to the verdict is tested end to end against a test double, but whether
+  our XML and regex anchoring satisfy an actual `wazuh-logtest` is unconfirmed. Expect
+  to touch `siggen/engine.py` the first time you point it at a live manager.
+- **Russian runtime, English README.** CLI messages, XML comments, and the prompt are in
+  Russian, so model-generated rule descriptions come out in Russian too. `docs/` is
+  Russian as well. Translating `prompts/detection.md` and the message strings is the
+  first job if you need English rules.
+- **One log line per run.** No corpus handling: no ingest, no clustering of undecoded
+  lines, no coverage report. That's Phase 4 in the roadmap, and it's where most of the
+  value for a real SOC sits.
+- **No Sigma, no Splunk, no Elastic.** The model returns JSON, not Sigma, and only
+  Wazuh/OSSEC XML can be emitted.
+- **The GigaChat provider is untested.** It's written against the official SDK but no
+  test covers it, because the suite deliberately never touches the network. The
+  Streamlit UI is in the same position: it runs on the same pipeline as the CLI, but
+  nothing exercises it automatically.
+- **The fake provider is a stub, not a detector.** Two hardcoded log shapes. Real logs
+  need `--provider gigachat`.
+- **The rule ID range is a guess.** It defaults to 100100–120000. Check it against your
+  own manager before allocating anything; collisions are the fastest way to break a
+  ruleset.
 
-- **Реальный `wazuh-logtest` не прогонялся**: демон Docker не был запущен, стенд не поднимался.
-  Связка «внешняя команда движка → коды возврата → вердикт» проверена end-to-end (`--logtest`,
-  `SIGGEN_LOGTEST` и тестовый двойник), но соответствие нашего XML и regex-якорей требованиям
-  настоящего движка нужно подтвердить в лаборатории: см. `tests/test_integration_engine.py`.
-  При первом запуске ожидайте правок в `siggen/engine.py`.
-- Провайдер GigaChat написан, но автотестами не покрыт (в CI не ходим в сеть).
-- Веб-интерфейс автотестами не покрыт.
-- Обрабатывается одна строка-образец за прогон: нет корпуса логов, кластеризации
-  и анализа покрытия (Фаза 4 в `docs/ROADMAP.md`).
-- Нет Sigma как входного формата и нет бэкендов Splunk/Elastic (Фаза 3).
-- Compliance-маппинг (PCI DSS, ISO 27001, ФСТЭК) не реализован (Фаза 5).
-- `FakeProvider` знает два демонстрационных шаблона — это заглушка для тестов, не детектор.
-- `rule_id_min`/`rule_id_max` по умолчанию (100100–120000) нужно сверить с диапазоном
-  пользовательских правил вашего менеджера.
-
-## Структура
+## Layout
 
 ```
 siggen/
-  cli.py          команды gen / validate
-  pipeline.py     оркестрация, реестр ID, отчёт
-  models.py       контракты: кандидат от модели → проверенный артефакт
-  providers.py    LlmProvider: fake и gigachat
-  prompts.py      загрузка версионированных промптов
-  emit.py         сборка XML (наш код, не модель)
-  validation.py   статические проверки и политика проекта
-  engine.py       прогон через wazuh-logtest/ossec-logtest
-  data.py         allowlist-ы полей и техник ATT&CK
-  ui/app.py       Streamlit
-prompts/detection.md    промпт с версией (хэш попадает в provenance)
-samples/                демонстрационные строки логов
-examples/               пример результата прогона
-tests/                  тесты (без сети и без токена)
-docs/                   ROADMAP, ARCHITECTURE, SECURITY
+  cli.py          the gen and validate commands
+  pipeline.py     orchestration, ID registry, report rendering
+  models.py       the contracts: model draft in, checked artifact out
+  providers.py    one interface, two implementations (fake, gigachat)
+  prompts.py      loads versioned prompts from prompts/
+  emit.py         builds XML
+  validation.py   static checks and project policy
+  engine.py       runs wazuh-logtest / ossec-logtest
+  data.py         allowed fields, allowed ATT&CK techniques
+  config.py       settings, environment variables
+  ui/app.py       Streamlit front end
+prompts/          the prompt, with its version
+samples/          demo log lines
+examples/         a real run's output, committed
+tests/            88 tests, no network, no token, no engine required
+docs/             roadmap, architecture, security notes
 ```
 
-## Разработка
+## Working on it
 
 ```bash
+python -m pip install -e ".[dev]"    # you only need pydantic to run it
 python -m pytest
 ```
 
-Тесты не требуют ни сети, ни токена, ни установленного движка: модель подменяется
-`FakeProvider`, `wazuh-logtest` — тестовым двойником в `tests/fixtures/fake_logtest.py`.
+The suite runs without network, token, or Wazuh: the model is replaced by
+`FakeProvider` and the engine by `tests/fixtures/fake_logtest.py`. If you change the
+prompt, expect the golden outputs under `examples/` to need regenerating.
 
-## История
+## License
 
-Первая версия проекта была демонстрацией «LLM пишет XML OSSEC-декодера»
-(видео: https://github.com/M0nteCarl0/Gigachat-SIEM-rules-generator-/assets/5123250/30e9e4d0-aeff-4f86-b8c8-d5133eb9fec5).
-Она заменена этим конвейером: идентификаторы, XML и вердикт формирует код, а не модель.
+None chosen yet. `pyproject.toml` currently declares this as proprietary, which means
+all rights reserved by default. If you plan to use it outside your own team, pick a
+license first.
